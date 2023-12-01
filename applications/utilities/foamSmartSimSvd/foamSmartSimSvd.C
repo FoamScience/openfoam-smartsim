@@ -33,11 +33,10 @@ Description
 
 \*---------------------------------------------------------------------------*/
 
-#include "error.H"
 #include "fvCFD.H"
 #include "wordList.H"
 #include "timeSelector.H"
-#include "client.h"
+#include "smartRedisDatabase.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -64,50 +63,36 @@ int main(int argc, char *argv[])
     const word fieldName = args.get<word>("fieldName");
     Info << "Approximating field " << fieldName << endl;
 
-    SmartRedis::Client smartRedisClient(false);
+    // Create a database connection
+    dictionary dbDict;
+    dbDict.set("region", polyMesh::defaultRegion);
+    dbDict.set("clusterMode", false);
+    dbDict.set("clientName", "default");
+    smartRedisDatabase db
+    (
+        "foamSmartSimSvd",
+        runTime,
+        dbDict
+    );
 
     // Create a list of all time step folders from the case folder.
     instantList inputTimeDirs = timeSelector::select0(runTime, args);
+    
+    // Posting number of processed time steps
+    db.addToMetadata("NTimes", Foam::name(inputTimeDirs.size()));
 
     forAll(inputTimeDirs, timeI)
     {
-        const auto& currentTime = inputTimeDirs[timeI];
-
+        const auto currentTime = inputTimeDirs[timeI];
         #include "createFields.H"
+        wordList fields{fieldName};
+        db.sendGeometricFields(fields, wordList{"internal"});
 
-        // If 'field' is a volScalarField 
-        if (!inputVolScalarFieldTmp->empty())
+        if (timeI+1 != inputTimeDirs.size())
         {
-            // Create the cell centers DataSet
-            const auto mpiIndexStr = std::to_string(Pstream::myProcNo());
-
-            const auto redisFieldName = "field_" + fieldName + 
-                                        "_time_" + currentTime.name() +
-                                        "_MPIrank_" + mpiIndexStr; 
-
-            auto redisDatasetName = "dataset_" + redisFieldName; 
-            SmartRedis::DataSet redisDataset(redisDatasetName);
-
-            // Add the type name into the input field dataset metadata. 
-            redisDataset.add_meta_string("type", "scalar");
-
-            //- Put the input field in smartredis.
-            Pout << "Writing field " << redisFieldName 
-                << " to SmartRedis. " << endl;
-
-            redisDataset.add_tensor(redisFieldName,
-                                    (void*)inputVolScalarFieldTmp->cdata(), 
-                                    std::vector<size_t>{size_t(mesh.nCells()), 1},
-                                    SRTensorTypeDouble, SRMemLayoutContiguous);
-
-            smartRedisClient.put_dataset(redisDataset);
-            smartRedisClient.append_to_list("redisDatasetList", 
-                                             redisDataset);
+            runTime.setDeltaT(inputTimeDirs[timeI+1].value() - inputTimeDirs[timeI].value());
         }
-        // TODO(TM): same as for the volScalarField only with vector dimensions.
-        else if (!inputVolVectorFieldTmp->empty())
-        {
-        }
+        ++runTime;
     }
 
 

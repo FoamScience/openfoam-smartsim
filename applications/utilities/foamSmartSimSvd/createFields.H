@@ -44,7 +44,7 @@ IOobject fieldHeader
 (
     fieldName, 
     currentTime.name(), 
-    runTime,  
+    mesh,  
     IOobject::MUST_READ
 );
     
