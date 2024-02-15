@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+blockMesh
+simpleFoam
+foamCleanTutorials . || true
